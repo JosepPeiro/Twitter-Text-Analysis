@@ -1,0 +1,40 @@
+```{r}
+library(shiny)
+library(shinyWidgets)
+library(shinythemes)
+```
+
+```{r}
+ui <- fluidPage(
+  shinythemes::themeSelector(),
+  sidebarLayout(
+    sidebarPanel(
+      sliderTextInput(
+       inputId = "month",
+       label = "Pick a month:", 
+        choices = month.name
+      ),
+      actionButton(
+        "button", "Press me"
+      )
+    ),
+    mainPanel(
+      textOutput("aux")
+    )
+  )
+)
+
+server <- function(input, output, session){
+  rval_button <- eventReactive(input$button, {input$month})
+  output$aux <- renderText({
+    month <- rval_button()
+    paste("The month you selected is", month)
+  })
+}
+shinyApp(ui, server)
+```
+
+```{r}
+
+```
+

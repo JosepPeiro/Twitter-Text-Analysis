@@ -1,0 +1,256 @@
+```{r, eval=F}
+library(twitteR)
+library(lubridate)
+library(ggplot2)
+library(tm)
+library(tidytext)
+library(qdap)
+library(stringr)
+library(SnowballC)
+library(RWeka)
+library(wordcloud)
+library(dplyr)
+library(dendextend)
+library(topicmodels)
+library(ggthemes)
+
+# download.file(url = "https://raw.githubusercontent.com/jboscomendoza/rpubs/master/sentimientos_afinn/lexico_afinn.en.es.csv",
+#               destfile = "dicc sent/afinn_español.csv")
+# afinn <- read.csv("dicc sent/afinn_español.csv", stringsAsFactors = F, fileEncoding = "latin1") %>%
+#   tbl_df()
+
+`%notin%` <- Negate(`%in%`)
+set.seed(1234)
+
+setup_twitter_oauth(consumer_key = "u2UthjbK6YHyQSp4sPk6yjsuV",
+  consumer_secret = "sC4mjd2WME5nH1FoWeSTuSy7JCP5DHjNtTYU1X6BwQ1vPZ0j3v",
+  access_token = "1365606414-7vPfPxStYNq6kWEATQlT8HZBd4G83BBcX4VoS9T",
+  access_secret = "0hJq9KYC3eBRuZzJqSacmtJ4PNJ7tNLkGrQrVl00JHirs")
+
+Tema<-"#Playa"
+tweets <- searchTwitter(Tema, lang = "es", n = 2000,retryOnRateLimit = 100)
+```
+
+```{r}
+tweet_df <- function(tweets){
+  total = length(tweets)
+  
+  id = character(total)
+  date = character(total)
+  text = character(total)
+  retweets = integer(total)
+  author = character(total)
+  
+  for (t in 1:length(tweets)){
+    id[t] <- tweets[[t]]$id
+    date[t] <- as.character(tweets[[t]]$created)
+    text[t] <- tweets[[t]]$text
+    retweets[t] <- tweets[[t]]$retweetCount
+    author[t] <- tweets[[t]]$screenName
+  }
+  
+  class(ymd_hms(date))
+  
+  tw <- data.frame(
+    doc_id = id,
+    text = text,
+    date = ymd_hms(date),
+    author = author,
+    retweets = retweets
+  )
+  return(tw)
+}
+```
+
+```{r}
+tw = tweet_df(tweets)
+```
+
+```{r}
+stop_words_my <- c(tm::stopwords("es"), "number", "rt", "at", "buenos dias", "eramos", "d", "cada", "mas", "s", "aqui", "ref", "asi", "solo", "hacia", "aas", "aavv", "araya")
+
+qdap_clean = function(x){
+  x=replace_abbreviation(x)
+  x=replace_contraction(x)
+  x=replace_number(x, remove = T)
+  x=replace_ordinal(x)
+  x=replace_symbol(x)
+  x=tolower(x)
+  x=str_replace_all(x, "á", "a")
+  x=str_replace_all(x, "é", "e")
+  x=str_replace_all(x, "í", "i")
+  x=str_replace_all(x, "ó", "o")
+  x=str_replace_all(x, "ú", "u")
+  #x=str_remove_all(x, pattern = "[!¿¡?]|[…]|[“•»«]")
+  #x=x[-grep(x, pattern = "^[^a-zA-Záéíóúñ]+$")]
+  x=str_remove_all(x, pattern = "[^a-zA-ZÁÉÍÓÚñ ]+")
+  #x=x[-grep(rownames(tweet_tdm_m), pattern = "https")]
+  x=str_remove_all(x, pattern = " ?https.* ?")
+  return(x)
+}  
+
+tm_clean=function(corpus){
+  corpus = tm_map(corpus, removePunctuation)
+  corpus = tm_map(corpus, stripWhitespace)
+  corpus = tm_map(corpus, removeWords,
+                  stop_words_my)
+  return(corpus)
+}
+```
+
+```{r}
+tw$text <- qdap_clean(tw$text)
+
+corpus_creator <- function(df){
+  corp <- tm_clean(VCorpus(DataframeSource(df)))
+  return(corp)
+}
+
+tokenizer <- function(x) {
+  NGramTokenizer(x, Weka_control(min=1, max=2))
+}
+
+tdm_creator <- function(corp){
+  tdm <- TermDocumentMatrix(corp,
+                     control=list(tokenize = tokenizer))
+  return(tdm)
+}
+tfidf_creator <- function(corp){
+  tfidf <- TermDocumentMatrix(corp,
+                     control = list(weighting = weightTfIdf,
+                        tokenize = tokenizer))
+  return(tfidf)
+}
+
+tidy_words_creator <- function(df){
+  tidy <- df %>% 
+    unnest_tokens(output = "word", token = "words", input = text) %>% 
+    filter(word %notin% stop_words_my) %>% 
+    #mutate(word = wordStem(word))
+  return(tidy)
+}
+```
+
+```{r}
+tweet_corp <- corpus_creator(tw)
+tweet_tdm <- tdm_creator(tweet_corp)
+tweet_tfidf <- tfidf_creator(tweet_corp)
+tweet_tdm_m <- as.matrix(tweet_tdm)
+tweet_tfidf_m <- as.matrix(tweet_tfidf)
+tweet_tidy <- tidy_words_creator(tw)
+```
+
+```{r}
+tweet_tfidf_freq <- rowSums(tweet_tfidf_m)
+tweet_tdm_freq <- rowSums(tweet_tdm_m)
+
+wordcloud(tweet_tfidf_freq, words = names(tweet_tfidf_freq), max.words=25, color="red")
+wordcloud(tweet_tdm_freq, words = names(tweet_tdm_freq), max.words=25, color="red")
+```
+
+```{r}
+hc <- hclust(dist(removeSparseTerms(tweet_tdm, sparse = 0.97)))
+hcd <- as.dendrogram(hc)
+hcd_colored <- branches_attr_by_labels(hcd, c("playa", "hoy", "gratis", "verano", "mar", "atardecer"), "red")
+plot(hcd_colored, main = "Dendograma")
+#plot(hc)
+```
+
+```{r}
+tweet_dtm <- DocumentTermMatrix(tweet_corp)
+tweet_dtm <- tweet_dtm[which(rowSums(as.matrix(tweet_dtm))>0),]
+tweet_lda <- LDA(tweet_dtm, k = 3, method = 'Gibbs')
+# tweet_lda_beta <- tweet_lda %>% tidy(matrix = "beta")
+# tweet_lda_gamma <- tweet_lda %>% tidy(matrix = "gamma")
+```
+
+```{r}
+topicos <- function(lda, ntopics){
+  topic_list <- vector("list", length = ntopics)
+  
+  lda_beta <- lda %>% tidy(matrix = "beta")
+  lda_gamma <- lda %>% tidy(matrix = "gamma")
+  
+  lda_gamma_ordered <- lda_gamma %>% 
+  group_by(document)%>%  
+  arrange(desc(gamma))%>%  
+  slice(1)%>%  
+  group_by(topic)%>%  
+  tally(topic, sort=TRUE)
+  
+  for (tpc in 1:ntopics){
+    topic_words <- lda_beta %>% 
+      filter(topic == tpc) %>% 
+      top_n(10, beta) %>% 
+      arrange(desc(beta))
+    topic_list[[tpc]] <- topic_words
+  }
+  sapply(lda_gamma_ordered$topic, function(x){print(topic_list[[x]])})
+}
+topicos(tweet_lda, 3)
+```
+
+```{r}
+# tweet_lda_gamma %>% 
+#   group_by(document)%>%  
+#   arrange(desc(gamma))%>%  
+#   slice(1)%>%  
+#   group_by(topic)%>%  
+#   tally(topic, sort=TRUE)
+```
+
+```{r}
+tweet_sent <- 
+  tweet_tidy %>% 
+  inner_join(afinn, by = c("word" = "Palabra")) %>% 
+  group_by(doc_id, date, author, retweets) %>% 
+  summarise(suma = sum(Puntuacion)) %>% 
+  ungroup() %>% 
+  mutate(hater = ifelse(suma<=-3, TRUE, FALSE))
+```
+
+```{r, message=FALSE}
+my_theme <- function(){
+  theme_minimal() + 
+    theme(
+      panel.grid.major.y=element_line(linetype = "dashed", color = "grey80"),
+      panel.grid.major.x=element_line(linetype = "dashed", color = "grey80"),
+      panel.grid = element_blank(), 
+      panel.background = element_blank(),
+      axis.ticks.y = element_blank(),
+    )
+}
+alt_hate = tweet_sent %>% count(suma) %>% summarise(sum(n)/8) %>% pull()
+
+tweet_sent %>% 
+  ggplot(aes(suma, color=hater, fill = hater))+
+  geom_histogram(binwidth = 1)+
+  labs(x = "Número de Tweets",
+       y = "Valoracion de los tweets",
+       title = "Cantidad de tweets por valoracion")+
+  geom_vline(xintercept = -2.5, color= "red", linetype="longdash")+
+  geom_text(aes(x = -3.4,
+                y = alt_hate,
+                label="Haters",
+                angle=90), color="red")+
+  my_theme()+
+  theme(legend.position = "none")+
+  scale_fill_manual(values=c("#56B4E9", "firebrick1"))
+
+tweet_sent %>% 
+  filter(retweets <= mean(retweets)+3*sd(retweets)) %>% 
+  ggplot(aes(suma, retweets))+
+  geom_count()+
+  facet_grid(.~hater)+
+  labs(fill = "Cantidad retweets")+
+  my_theme()
+```
+
+```{r}
+pun<-grep(rownames(tweet_tdm_m), pattern = "https")
+
+rownames(tweet_tdm_m)[pun]
+
+df[which(df$doc_id=="1556197644552114176"),]
+```
+

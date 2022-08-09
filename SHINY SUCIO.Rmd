@@ -183,6 +183,19 @@ ui <- fluidPage(
       actionButton(
         "button", "Aprietame para continuar"
         ),
+      hr(),
+      textInput("stopwords",
+        label = "Eliminar palabra(s)",
+        placeholder = 'Separalas por ", " Ejemplo: a, ante, bajo, con...'
+        ),
+      prettyCheckbox(
+        inputId = "dividir_palabras",
+        label = "Eliminar", 
+        value = F,
+        status = "danger",
+        shape = "curve",
+        outline = TRUE
+        )
       ),
     mainPanel(
       tabsetPanel(
@@ -214,9 +227,15 @@ server <- function(input, output, session){
   output$tweets_tabla <- DT::renderDT({
     hastag_numero <- rval_button()
   })
+  rval_stopwords <- eventReactive(input$dividir_palabras, {
+    stopwords_adicionales_sucio <- input$stopwords
+    stopwords_adicionales <- str_split(stopwords_adicionales_sucio, pattern=", ", simplify = T)
+    return(stopwords_adicionales)
+  })
   rval_recursos <- reactive({
     tweet_df <- rval_button()
-    recursos <- limpiar(tweet_df)
+    stopwords_adicionales <- rval_stopwords()
+    recursos <- limpiar(tweet_df, stopwords_adicionales)
     return(recursos)
   })
   output$wordcloud <- renderPlot({

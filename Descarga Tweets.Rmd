@@ -1,4 +1,4 @@
-```{r, eval=F}
+```{r, eval=T}
 library(twitteR)
 library(lubridate)
 library(ggplot2)
@@ -13,11 +13,15 @@ library(dplyr)
 library(dendextend)
 library(topicmodels)
 library(ggthemes)
+library(shiny)
+library(shinyWidgets)
+library(shinythemes)
+library(DT)
 
 # download.file(url = "https://raw.githubusercontent.com/jboscomendoza/rpubs/master/sentimientos_afinn/lexico_afinn.en.es.csv",
 #               destfile = "dicc sent/afinn_español.csv")
-# afinn <- read.csv("dicc sent/afinn_español.csv", stringsAsFactors = F, fileEncoding = "latin1") %>%
-#   tbl_df()
+afinn <- read.csv("dicc sent/afinn_español.csv", stringsAsFactors = F, fileEncoding = "latin1") %>%
+  tbl_df()
 
 `%notin%` <- Negate(`%in%`)
 set.seed(1234)
@@ -246,11 +250,69 @@ tweet_sent %>%
   my_theme()
 ```
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```{r}
-pun<-grep(rownames(tweet_tdm_m), pattern = "https")
+ui <- fluidPage(
+  shinythemes::themeSelector(),
+  sidebarLayout(
+    sidebarPanel(
+      textInput(
+      inputId = "hastag",
+      label = "Escribe el hastag que quieras buscar", 
+      placeholder = "#Hastag",
+      width = "100%"
+        ),
+      sliderTextInput(
+      inputId = "numtweets",
+      label = "Elige cantidad de tweets:", 
+      choices = c(200, 500, 1000, 5000, 10000, 20000, 50000),
+      grid = TRUE
+        ),
+      actionButton(
+        "button", "Aprietame para continuar"
+        )
+      ),
+    mainPanel(
+      textOutput("aux")
+    )
+  )
+)
 
-rownames(tweet_tdm_m)[pun]
+server <- function(input, output, session){
+  rval_button <- eventReactive(input$button, {
+    hast <- input$hastag
+    if (!grepl(hast, pattern = "^#")){
+      hast = str_glue("#", hast)
+    }
+    def_tweets <- c(hast, input$numtweets)
+    return(def_tweets)
+  })
+  
+  output$aux <- renderText({
+    hastag_numero <- rval_button()
+    paste("El hastag es", hastag_numero[1], "y quieres", hastag_numero[2], "tweets")
+  })
+}
+shinyApp(ui, server)
+```
 
-df[which(df$doc_id=="1556197644552114176"),]
+```{r}
+shinyWidgetsGallery()
 ```
 

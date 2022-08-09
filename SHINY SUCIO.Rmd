@@ -1,40 +1,239 @@
 ```{r}
+library(twitteR)
+library(lubridate)
+library(ggplot2)
+library(tm)
+library(tidytext)
+library(qdap)
+library(stringr)
+library(SnowballC)
+library(RWeka)
+library(wordcloud)
+library(dplyr)
+library(dendextend)
+library(topicmodels)
+library(ggthemes)
 library(shiny)
 library(shinyWidgets)
 library(shinythemes)
+library(DT)
+library(RColorBrewer)
+library(shinydashboard)
 ```
+
+
+```{r}
+setup_twitter_oauth(consumer_key = "u2UthjbK6YHyQSp4sPk6yjsuV",
+  consumer_secret = "sC4mjd2WME5nH1FoWeSTuSy7JCP5DHjNtTYU1X6BwQ1vPZ0j3v",
+  access_token = "1365606414-7vPfPxStYNq6kWEATQlT8HZBd4G83BBcX4VoS9T",
+  access_secret = "0hJq9KYC3eBRuZzJqSacmtJ4PNJ7tNLkGrQrVl00JHirs")
+```
+
+
+```{r}
+descarga <- function(tema, numero){
+  tweets <- searchTwitter(tema, lang = "es", n = numero,retryOnRateLimit = 100)
+  tw = tweet_df(tweets)
+  return(tw)
+}
+
+tweet_df <- function(tweets){
+  total = length(tweets)
+  
+  id = character(total)
+  date = character(total)
+  text = character(total)
+  retweets = integer(total)
+  author = character(total)
+  
+  for (t in 1:length(tweets)){
+    id[t] <- tweets[[t]]$id
+    date[t] <- as.character(tweets[[t]]$created)
+    text[t] <- tweets[[t]]$text
+    retweets[t] <- tweets[[t]]$retweetCount
+    author[t] <- tweets[[t]]$screenName
+  }
+
+  tw <- data.frame(
+    doc_id = id,
+    text = text,
+    date = ymd_hms(date),
+    author = author,
+    retweets = retweets
+  )
+  return(tw)
+}
+```
+
+```{r}
+qdap_clean = function(x){
+  x=replace_abbreviation(x)
+  x=replace_contraction(x)
+  x=replace_number(x, remove = T)
+  x=replace_ordinal(x)
+  x=replace_symbol(x)
+  x=tolower(x)
+  x=str_replace_all(x, "á", "a")
+  x=str_replace_all(x, "é", "e")
+  x=str_replace_all(x, "í", "i")
+  x=str_replace_all(x, "ó", "o")
+  x=str_replace_all(x, "ú", "u")
+  #x=str_remove_all(x, pattern = "[!¿¡?]|[…]|[“•»«]")
+  #x=x[-grep(x, pattern = "^[^a-zA-Záéíóúñ]+$")]
+  x=str_remove_all(x, pattern = "[^a-zA-ZÁÉÍÓÚñ ]+")
+  #x=x[-grep(rownames(tweet_tdm_m), pattern = "https")]
+  x=str_remove_all(x, pattern = " ?https.* ?")
+  return(x)
+}
+
+tm_clean=function(corpus, stopwords){
+  corpus = tm_map(corpus, removePunctuation)
+  corpus = tm_map(corpus, stripWhitespace)
+  corpus = tm_map(corpus, removeWords,
+                  stopwords)
+  return(corpus)
+}
+
+corpus_creator <- function(df, stopwords){
+  corp <- tm_clean(VCorpus(DataframeSource(df)), stopwords)
+  return(corp)
+}
+
+tokenizer <- function(x) {
+  NGramTokenizer(x, Weka_control(min=1, max=2))
+}
+
+tdm_creator <- function(corp){
+  tdm <- TermDocumentMatrix(corp,
+                     control=list(tokenize = tokenizer))
+  return(tdm)
+}
+
+tfidf_creator <- function(corp){
+  tfidf <- TermDocumentMatrix(corp,
+                     control = list(weighting = weightTfIdf,
+                        tokenize = tokenizer))
+  return(tfidf)
+}
+
+tidy_words_creator <- function(df, stopwords){
+  tidy <- df %>% 
+    unnest_tokens(output = "word", token = "words", input = text) %>% 
+    filter(word %notin% stopwords) %>% 
+    #mutate(word = wordStem(word))
+  return(tidy)
+}
+
+limpiar <- function(df, stop_aux = NULL){
+  stop_words_my <- c(stop_aux, tm::stopwords("es"), "number", "rt", "at", "eramos", "d", "cada",
+                     "mas", "s", "aqui", "ref", "asi", "solo", "hacia", "aas", "aavv", "araya")
+  
+  df$text <- qdap_clean(df$text)
+  tweet_corp <- corpus_creator(df, stop_words_my)
+  tweet_tdm <- tdm_creator(tweet_corp)
+  tweet_tfidf <- tfidf_creator(tweet_corp)
+  tweet_tdm_m <- as.matrix(tweet_tdm)
+  tweet_tfidf_m <- as.matrix(tweet_tfidf)
+  tweet_tidy <- tidy_words_creator(df, stop_words_my)
+  tweet_tfidf_freq <- rowSums(tweet_tfidf_m)
+  tweet_tdm_freq <- rowSums(tweet_tdm_m)
+  
+  resultado <- list(tweet_tdm,
+                    tweet_tfidf, 
+                    tweet_tdm_m,
+                    tweet_tfidf_m,
+                    tweet_tdm_freq,
+                    tweet_tfidf_freq,
+                    tweet_tidy)
+  return(resultado)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ```{r}
 ui <- fluidPage(
   shinythemes::themeSelector(),
   sidebarLayout(
     sidebarPanel(
+      textInput(
+      inputId = "hastag",
+      label = "Escribe el hastag que quieras buscar", 
+      placeholder = "#Hastag",
+      width = "100%"
+        ),
       sliderTextInput(
-       inputId = "month",
-       label = "Pick a month:", 
-        choices = month.name
-      ),
+      inputId = "numtweets",
+      label = "Elige cantidad de tweets:", 
+      choices = c(200, 500, 1000, 5000, 10000, 20000, 50000),
+      grid = TRUE
+        ),
       actionButton(
-        "button", "Press me"
-      )
-    ),
+        "button", "Aprietame para continuar"
+        ),
+      ),
     mainPanel(
-      textOutput("aux")
+      tabsetPanel(
+        tabPanel("Tabla", DT::DTOutput("tweets_tabla")),
+        tabPanel("Word Cloud", plotOutput("wordcloud"),
+                               sliderTextInput(
+                                 inputId = "max_pal_word",
+                                 label = "Maximo de palabras", 
+                                 choices = 1:200,
+                                 selected = 30,
+                                 from_min = 20,
+                                 from_max = 120
+                                  )
+                 )
+      )
     )
   )
 )
 
 server <- function(input, output, session){
-  rval_button <- eventReactive(input$button, {input$month})
-  output$aux <- renderText({
-    month <- rval_button()
-    paste("The month you selected is", month)
+  rval_button <- eventReactive(input$button, {
+    hast <- input$hastag
+    if (!grepl(hast, pattern = "^#")){
+      hast = str_glue("#", hast)
+    }
+    tweet_dataframe <- descarga(hast, input$numtweets)
+    return(tweet_dataframe)
+  })
+  output$tweets_tabla <- DT::renderDT({
+    hastag_numero <- rval_button()
+  })
+  rval_recursos <- reactive({
+    tweet_df <- rval_button()
+    recursos <- limpiar(tweet_df)
+    return(recursos)
+  })
+  output$wordcloud <- renderPlot({
+    freq_matrix <- rval_recursos()[[5]]
+    wordcloud(
+      words = names(freq_matrix),
+      freq = freq_matrix,
+      scale=c(4,0.5),
+      max.words=input$max_pal_word,
+      colors=brewer.pal(8, "Dark2")
+    )
   })
 }
 shinyApp(ui, server)
 ```
 
 ```{r}
-
+shinyWidgetsGallery()
 ```
 

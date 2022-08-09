@@ -149,6 +149,16 @@ limpiar <- function(df, stop_aux = NULL){
 }
 ```
 
+```{r}
+dendograma <- function(tdm, dispersion, palabras_coloreadas = NULL, color = "red"){
+  hc <- hclust(dist(removeSparseTerms(tdm, sparse = dispersion)))
+  hcd <- as.dendrogram(hc)
+  if (!is.null(palabras_coloreadas)){
+    hcd <- branches_attr_by_labels(hcd, palabras_coloreadas, color)
+  }
+  plot(hcd, main = "Dendograma")
+}
+```
 
 
 
@@ -208,8 +218,27 @@ ui <- fluidPage(
                                  selected = 30,
                                  from_min = 20,
                                  from_max = 120
-                                  )
-                 )
+                                )),
+        tabPanel("Dendograma", plotOutput("dend"),
+                               sliderTextInput(
+                                 inputId = "dispersion",
+                                 label = "Dispersion de las palabras",
+                                 choices = seq(from = 0.93, to = 0.99, by = 0.005)),
+                               textInput("coloreadas",
+                                 label = "Marca las palabras importantes",
+                                 placeholder = 'Separalas por ", " Ejemplo: a, ante, bajo, con...'),
+                               pickerInput(
+                                 inputId = "select_color",
+                                 label = "Selecciona Color", 
+                                 choices = c("red", "blue", "green", "yellow", "pink", "purple"),
+                                 choicesOpt = list(
+                                 style = c("color: white; background: red;", 
+                                           "color: white; background: blue",
+                                           "color: white; background: green",
+                                           "color: white; background: yellow",
+                                           "color: white; background: pink",
+                                           "color: white; background: purple"
+                                           ))))
       )
     )
   )
@@ -247,6 +276,12 @@ server <- function(input, output, session){
       max.words=input$max_pal_word,
       colors=brewer.pal(8, "Dark2")
     )
+  })
+  output$dend <- renderPlot({
+    tdm_tweet <- rval_recursos()[[1]]
+    palabras_color_sucio <- input$coloreadas
+    palabras_color <- str_split(palabras_color_sucio, pattern=", ", simplify = T)
+    dendograma(tdm_tweet, input$dispersion, palabras_color, input$select_color)
   })
 }
 shinyApp(ui, server)

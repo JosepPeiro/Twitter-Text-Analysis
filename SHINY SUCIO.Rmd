@@ -19,6 +19,8 @@ library(shinythemes)
 library(DT)
 library(RColorBrewer)
 library(shinydashboard)
+
+`%notin%` <- Negate(`%in%`)
 ```
 
 
@@ -99,7 +101,7 @@ corpus_creator <- function(df, stopwords){
   return(corp)
 }
 
-tokenizer <- function(x) {
+tokenizer <- function(x){
   NGramTokenizer(x, Weka_control(min=1, max=2))
 }
 
@@ -144,7 +146,8 @@ limpiar <- function(df, stop_aux = NULL){
                     tweet_tfidf_m,
                     tweet_tdm_freq,
                     tweet_tfidf_freq,
-                    tweet_tidy)
+                    tweet_tidy,
+                    tweet_corp)
   return(resultado)
 }
 ```
@@ -160,7 +163,61 @@ dendograma <- function(tdm, dispersion, palabras_coloreadas = NULL, color = "red
 }
 ```
 
+```{r}
+crear_lda <- function(corpus, ntopic){
+  tweet_dtm <- DocumentTermMatrix(corpus)
+  tweet_dtm <- tweet_dtm[which(rowSums(as.matrix(tweet_dtm))>0),]
+  tweet_lda <- LDA(tweet_dtm, k = ntopic, method = 'Gibbs')
+  return(tweet_lda)
+}
 
+crear_topicos <- function(lda, ntopics){
+  topic_list <- vector(mode = "list", length = (ntopics + 1))
+  
+  lda_beta <- lda %>% tidy(matrix = "beta")
+  lda_gamma <- lda %>% tidy(matrix = "gamma")
+  
+  lda_gamma_ordered <- lda_gamma %>% 
+  group_by(document)%>%  
+  arrange(desc(gamma))%>%  
+  slice(1)%>%  
+  group_by(topic)%>%  
+  tally(topic, sort=TRUE)
+  
+  topic_list[[1]] <- lda_gamma_ordered
+  
+  for (tpc in 1:ntopics){
+    topic_words <- lda_beta %>% 
+      filter(topic == tpc) %>% 
+      top_n(10, beta) %>% 
+      arrange(desc(beta))
+    topic_list[[tpc + 1]] <- topic_words
+  }
+  return(topic_list)
+}
+
+topicos <- function(corpus, ntopic){
+  lda <- crear_lda(corpus, ntopic)
+  topicos <- crear_topicos(lda, ntopic)
+  return(topicos)
+}
+```
+
+```{r}
+afinn_df <- function(df, remove_outliers){
+  tweet_sent <- 
+    df %>% 
+    inner_join(afinn, by = c("word" = "Palabra")) %>% 
+    group_by(doc_id, date, author, retweets) %>% 
+    summarise(suma = sum(Puntuacion)) %>% 
+    ungroup() %>% 
+    mutate(hater = ifelse(suma<=-3, TRUE, FALSE))
+  if (remove_outliers){
+    tweet_sent <- tweet_sent %>% filter(retweets <= mean(retweets)+3*sd(retweets))
+  }
+  return(tweet_sent)
+}
+```
 
 
 
@@ -175,7 +232,7 @@ dendograma <- function(tdm, dispersion, palabras_coloreadas = NULL, color = "red
 
 ```{r}
 ui <- fluidPage(
-  shinythemes::themeSelector(),
+  theme = shinythemes::shinytheme("spacelab"),
   sidebarLayout(
     sidebarPanel(
       textInput(
@@ -198,13 +255,14 @@ ui <- fluidPage(
         label = "Eliminar palabra(s)",
         placeholder = 'Separalas por ", " Ejemplo: a, ante, bajo, con...'
         ),
-      prettyCheckbox(
+      switchInput(
         inputId = "dividir_palabras",
         label = "Eliminar", 
         value = F,
-        status = "danger",
-        shape = "curve",
-        outline = TRUE
+        onStatus = "success",
+        offStatus  = "success",
+        onLabel = "Presioname",
+        offLabel = "Presioname"
         )
       ),
     mainPanel(
@@ -214,7 +272,7 @@ ui <- fluidPage(
                                sliderTextInput(
                                  inputId = "max_pal_word",
                                  label = "Maximo de palabras", 
-                                 choices = 1:200,
+                                 choices = 1:150,
                                  selected = 30,
                                  from_min = 20,
                                  from_max = 120
@@ -238,7 +296,34 @@ ui <- fluidPage(
                                            "color: white; background: yellow",
                                            "color: white; background: pink",
                                            "color: white; background: purple"
-                                           ))))
+                                           )))),
+        tabPanel("Topicos", DT::DTOutput("topico"),
+                            sliderTextInput(
+                              inputId = "numerotopicos",
+                              label = "Numero de topicos",
+                              choices = 1:14,
+                              selected = 3),
+                            awesomeRadio(
+                              inputId = "topicoelegido",
+                              label = "Radio buttons", 
+                              choices = 0:14,
+                              selected = 0,
+                              inline = TRUE, 
+                              checkbox = TRUE)),
+        tabPanel("Graficos",
+                 sidebarLayout(
+                   sidebarPanel(
+                     prettyToggle(
+                     inputId = "outliers",
+                     label_on = "Outliers eliminados", 
+                     label_off = "Outliers integrados!!!",
+                     inline=T
+                       )
+                   ),
+                   mainPanel(
+                     plotOutput("histograma")
+                   )
+                   ))
       )
     )
   )
@@ -282,6 +367,12 @@ server <- function(input, output, session){
     palabras_color_sucio <- input$coloreadas
     palabras_color <- str_split(palabras_color_sucio, pattern=", ", simplify = T)
     dendograma(tdm_tweet, input$dispersion, palabras_color, input$select_color)
+  })
+  rval_topico <- reactive({
+    lista_tpc <- topicos(rval_recursos()[[8]], input$numerotopicos)
+  })
+  output$topico <- DT::renderDT({
+    mostrar<-rval_topico()[[as.numeric(input$topicoelegido) + 1]] 
   })
 }
 shinyApp(ui, server)

@@ -19,8 +19,12 @@ library(shinythemes)
 library(DT)
 library(RColorBrewer)
 library(shinydashboard)
+library(plotly)
 
 `%notin%` <- Negate(`%in%`)
+
+afinn <- read.csv("dicc sent/afinn_español.csv", stringsAsFactors = F, fileEncoding = "latin1") %>%
+  tbl_df()
 ```
 
 
@@ -204,18 +208,29 @@ topicos <- function(corpus, ntopic){
 ```
 
 ```{r}
-afinn_df <- function(df, remove_outliers){
+afinn_df <- function(df, remove_outliers, hater){
   tweet_sent <- 
     df %>% 
     inner_join(afinn, by = c("word" = "Palabra")) %>% 
     group_by(doc_id, date, author, retweets) %>% 
     summarise(suma = sum(Puntuacion)) %>% 
     ungroup() %>% 
-    mutate(hater = ifelse(suma<=-3, TRUE, FALSE))
+    mutate(hater = ifelse(suma<=hater, TRUE, FALSE))
   if (remove_outliers){
     tweet_sent <- tweet_sent %>% filter(retweets <= mean(retweets)+3*sd(retweets))
   }
   return(tweet_sent)
+}
+
+my_theme <- function(){
+  theme_minimal() + 
+    theme(
+      panel.grid.major.y=element_line(linetype = "dashed", color = "grey80"),
+      panel.grid.major.x=element_line(linetype = "dashed", color = "grey80"),
+      panel.grid = element_blank(), 
+      panel.background = element_blank(),
+      axis.ticks.y = element_blank(),
+    )
 }
 ```
 
@@ -318,12 +333,26 @@ ui <- fluidPage(
                      label_on = "Outliers eliminados", 
                      label_off = "Outliers integrados!!!",
                      inline=T
-                       )
+                       ),
+                     sliderTextInput(
+                       inputId = "hater",
+                       label = "Puntuacion hater",
+                       choices = -10:10,
+                       from_min = -10,
+                       from_max = 0,
+                       selected = -3
+                     )
                    ),
                    mainPanel(
-                     plotOutput("histograma")
+                     tabsetPanel(
+                       tabPanel("Retweets", plotly::plotlyOutput("count")),
+                       tabPanel("Histograma", plotly::plotlyOutput("histograma")),
+                       tabPanel("Haters", DT::DTOutput("hatertext"))
+                       ),
+                     textOutput("porcentaje"),
+                     )
                    )
-                   ))
+                 )
       )
     )
   )
@@ -374,7 +403,47 @@ server <- function(input, output, session){
   output$topico <- DT::renderDT({
     mostrar<-rval_topico()[[as.numeric(input$topicoelegido) + 1]] 
   })
+  rval_sentimiento <- reactive({
+    df_sent <- afinn_df(rval_recursos()[[7]],
+                        remove_outliers = input$outliers,
+                        hater = input$hater)
+  })
+  output$count <- plotly::renderPlotly({
+    ggplot(rval_sentimiento(), aes(suma, retweets, color = hater))+
+      geom_count()+
+      labs(size = "Cantidad retweets")+
+      my_theme()
+  })
+  rval_altura_hate <- reactive({
+    alt_hate = rval_sentimiento() %>% count(suma) %>% summarise(sum(n)/8) %>% pull()
+  })
+  output$histograma <- plotly::renderPlotly({
+    ggplot(rval_sentimiento(), aes(suma, color=hater, fill = hater))+
+      geom_histogram(binwidth = 1)+
+      labs(x = "Número de Tweets",
+           y = "Valoracion de los tweets",
+           title = "Cantidad de tweets por valoracion")+
+      geom_vline(xintercept = input$hater + 0.5, color= "red", linetype="longdash")+
+      geom_text(aes(x = input$hater - 0.4,
+                    y = rval_altura_hate(),
+                    label="Haters",
+                    angle=90), color="red")+
+      my_theme()+
+      theme(legend.position = "none")+
+      scale_fill_manual(values=c("#56B4E9", "firebrick1"))
+  })
+  output$porcentaje <- renderText(
+    paste("El porcentaje de haters es de", sum(rval_sentimiento()$hater) / nrow(rval_sentimiento()))
+  )
+  output$hatertext <- DT::renderDT(
+    rval_sentimiento() %>%
+      filter(hater) %>% 
+      inner_join(rval_button(), by = c("doc_id", "date", "author", "retweets")) %>%
+      arrange(suma) %>% 
+      select(doc_id, text, everything())
+  )
 }
+
 shinyApp(ui, server)
 ```
 

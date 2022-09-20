@@ -245,7 +245,7 @@ my_theme <- function(){
 
 
 
-```{r}
+```{r, warning=FALSE}
 ui <- fluidPage(
   theme = shinythemes::shinytheme("spacelab"),
   sidebarLayout(
@@ -451,3 +451,11 @@ shinyApp(ui, server)
 shinyWidgetsGallery()
 ```
 
+Falta:
+- Poder elegir entre TDM o TFIDF
+- Poder poner varios hastags
+- Poder elegir que grafico quieres visualizar
+- Tokenizar
+  > Tabla con mayores retweets
+  > Tabla de haters
+  ...
